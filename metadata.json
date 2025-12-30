@@ -1,0 +1,7 @@
+{
+  "name": "Agentic Intelligence Lab",
+  "description": "An interactive learning platform and playground for building LLM Agents, following a 5-stage architectural roadmap from prompt engineering to multi-agent systems.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
