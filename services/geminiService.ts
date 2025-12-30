@@ -1,103 +1,105 @@
 
-import { GoogleGenAI, GenerateContentResponse, Type, FunctionDeclaration } from "@google/genai";
-import { Language } from "../types";
+import { AISuite } from "./AISuite";
+import { StageId, Language } from "../types";
+import { Type } from "@google/genai";
 
-// Always use process.env.API_KEY directly for initialization as per guidelines
-export const getGeminiClient = () => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
-};
+// Initialize the suite with the environment key
+const getAgent = () => new AISuite(process.env.API_KEY);
 
-// Simulated Financial Tools for Stage 3
-const stockPriceTool: FunctionDeclaration = {
-  name: 'get_stock_price',
-  parameters: {
-    type: Type.OBJECT,
-    description: 'Get the current stock price and change percentage for a given ticker.',
-    properties: {
-      ticker: {
-        type: Type.STRING,
-        description: 'The stock symbol (e.g., AAPL, TSLA, BTC).',
-      },
-    },
-    required: ['ticker'],
-  },
-};
-
-const marketSentimentTool: FunctionDeclaration = {
-  name: 'get_market_sentiment',
-  parameters: {
-    type: Type.OBJECT,
-    description: 'Get general market sentiment for a sector.',
-    properties: {
-      sector: {
-        type: Type.STRING,
-        description: 'The industry sector (e.g., Tech, Finance, Energy).',
-      },
-    },
-    required: ['sector'],
-  },
-};
-
-export const runAgenticCycle = async (
-  prompt: string, 
+/**
+ * Maps the curriculum steps to actual executable logic.
+ * This ensures that when a user clicks "Execute", the sandbox runs the code shown on screen.
+ */
+export const executeStepLogic = async (
+  stageId: StageId,
+  stepIndex: number,
+  input: string,
   lang: Language,
   onLog: (log: { type: 'thought' | 'action' | 'observation' | 'system', content: string }) => void
 ) => {
-  // Initialize AI client right before use to ensure updated configuration
-  const ai = getGeminiClient();
-  
-  const initialLog = lang === 'en' 
-    ? "Initializing Agent Brain... Planning steps for: "
-    : "正在初始化智能体大脑... 规划步骤：";
-    
-  onLog({ type: 'thought', content: initialLog + prompt });
+  const agent = getAgent();
 
   try {
-    const systemInstruction = lang === 'en'
-      ? "Respond primarily in English. Use tools when appropriate."
-      : "请主要使用中文回答。在适当的时候使用工具。";
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingBudget: 2000 },
-        tools: [{ functionDeclarations: [stockPriceTool, marketSentimentTool] }]
+    // --- STAGE 1: BRAIN BUILDING ---
+    if (stageId === StageId.BRAIN) {
+      if (stepIndex === 0) {
+        // Step 1.1: CoT & ReAct
+        const systemInstruction = lang === 'en' 
+          ? "You are a high-reasoning Agent. Use Thought/Action/Observation/Conclusion format." 
+          : "你是一个具备深度推理能力的智能体。请遵循：思考/行动/观察/结论 的逻辑循环。";
+        
+        onLog({ type: 'system', content: lang === 'en' ? "Configuring CoT with 2000 token budget..." : "正在配置 2000 Token 预算的思维链..." });
+        
+        const res = await agent.generate({
+          prompt: input,
+          systemInstruction,
+          thinkingBudget: 2000
+        });
+        return res.text;
       }
-    });
 
-    if (response.functionCalls && response.functionCalls.length > 0) {
-      for (const fc of response.functionCalls) {
-        const actionLog = lang === 'en'
-          ? `Executing Tool: ${fc.name}(${JSON.stringify(fc.args)})`
-          : `正在执行工具: ${fc.name}(${JSON.stringify(fc.args)})`;
-        onLog({ type: 'action', content: actionLog });
-        
-        // Mocking tool responses for demonstration
-        let result = "";
-        if (fc.name === 'get_stock_price') {
-          const price = (Math.random() * 1000).toFixed(2);
-          result = lang === 'en' 
-            ? `Price: $${price}, Change: +1.2%`
-            : `价格: $${price}, 涨跌幅: +1.2%`;
-        } else {
-          result = lang === 'en'
-            ? "Current sentiment is Bullish, high institutional interest detected."
-            : "当前市场情绪看涨，探测到机构投资者的浓厚兴趣。";
+      if (stepIndex === 1) {
+        // Step 1.2: JSON Mode
+        const schema = {
+          type: Type.OBJECT,
+          properties: {
+            analysis: { type: Type.STRING },
+            entities: { type: Type.ARRAY, items: { type: Type.STRING } },
+            confidence: { type: Type.NUMBER }
+          },
+          required: ["analysis", "entities"]
+        };
+        onLog({ type: 'system', content: "Enforcing JSON Schema output..." });
+        const res = await agent.generate({
+          prompt: input,
+          responseMimeType: "application/json",
+          responseSchema: schema
+        });
+        return res.text;
+      }
+
+      if (stepIndex === 2) {
+        // Step 1.3: Function Calling
+        const tools = [{
+          name: "query_user_db",
+          description: "Queries internal database for user history.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              user_id: { type: Type.STRING },
+              query_type: { type: Type.STRING, enum: ["purchases", "profile"] }
+            },
+            required: ["user_id", "query_type"]
+          }
+        }];
+        onLog({ type: 'system', content: "Registering tools for detection..." });
+        const res = await agent.generate({ prompt: input, tools });
+        if (res.functionCalls) {
+          const call = res.functionCalls[0];
+          onLog({ type: 'action', content: `Call: ${call.name}(${JSON.stringify(call.args)})` });
+          return `Tool Requested: ${call.name}`;
         }
-        
-        const obsLog = lang === 'en' ? "Tool Observation: " : "工具观察结果: ";
-        onLog({ type: 'observation', content: obsLog + result });
+        return res.text;
       }
     }
 
-    // Use .text property to extract response content
-    return response.text || (lang === 'en' ? "Task completed." : "任务已完成。");
+    // --- STAGE 3: PRACTICE (Specialized Tools) ---
+    if (stageId === StageId.PRACTICE) {
+       // Mocked execution for financial assistant
+       onLog({ type: 'thought', content: "Analyzing market data vectors..." });
+       const res = await agent.generate({ prompt: input, thinkingBudget: 1000 });
+       return res.text;
+    }
+
+    // Default fallback for other stages
+    const genericRes = await agent.generate({ prompt: input });
+    return genericRes.text;
 
   } catch (error: any) {
-    const errorLog = lang === 'en' ? "Error encountered: " : "遇到错误: ";
-    onLog({ type: 'system', content: errorLog + error.message });
-    return lang === 'en' ? "Failed to complete task." : "无法完成任务。";
+    onLog({ type: 'system', content: `Error: ${error.message}` });
+    return `Execution Failed: ${error.message}`;
   }
 };
+
+// Keep old export for compatibility if needed, but point to new logic
+export const runAgenticCycle = executeStepLogic;

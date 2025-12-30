@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { STAGES, UI_STRINGS } from './constants';
 import { StageId, AgentLog, Language } from './types';
 import FloatingSandbox from './components/FloatingSandbox';
-import { runAgenticCycle } from './services/geminiService';
+import { executeStepLogic } from './services/geminiService';
 
 const App: React.FC = () => {
   const [lang, setLang] = useState<Language>('zh');
@@ -36,18 +36,29 @@ const App: React.FC = () => {
   };
 
   const handleRunAgent = async (userInput: string) => {
-    if (!userInput.trim()) return;
+    if (!userInput.trim()) {
+      setLogs([]);
+      setFinalResult(null);
+      return;
+    }
+    
     setIsThinking(true);
     setFinalResult(null);
     setLogs([]);
     
-    addLog('system', lang === 'en' ? `Executing step: ${currentStep.title}` : `执行步骤: ${currentStep.title}`);
+    addLog('system', lang === 'en' ? `Invoking Step Logic: ${currentStep.title}` : `调用步骤逻辑: ${currentStep.title}`);
     
-    const result = await runAgenticCycle(userInput, lang, ({ type, content }) => {
-      addLog(type, content);
-    });
+    const result = await executeStepLogic(
+      activeStageId, 
+      currentStepIndex, 
+      userInput, 
+      lang, 
+      ({ type, content }) => {
+        addLog(type, content);
+      }
+    );
 
-    setFinalResult(result);
+    setFinalResult(result || null);
     setIsThinking(false);
   };
 
@@ -195,13 +206,14 @@ const App: React.FC = () => {
           </div>
         </footer>
 
-        {/* Collapsible Sandbox */}
+        {/* Floating Sandbox with Execution Logic */}
         <FloatingSandbox 
           logs={logs} 
           isThinking={isThinking} 
           lang={lang} 
           onRun={handleRunAgent} 
-          finalResult={finalResult} 
+          finalResult={finalResult}
+          stepTitle={currentStep.title}
         />
       </main>
     </div>
